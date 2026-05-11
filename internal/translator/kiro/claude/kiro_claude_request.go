@@ -339,7 +339,8 @@ func extractSystemPrompt(claudeBody []byte) string {
 	return systemField.String()
 }
 
-// checkThinkingMode checks if thinking mode is enabled in the Claude request
+// checkThinkingMode checks if thinking mode is enabled in the Claude request.
+// Supports thinking.type values: "enabled", "adaptive", "auto".
 func checkThinkingMode(claudeBody []byte) (bool, int64) {
 	thinkingEnabled := false
 	var budgetTokens int64 = 24000
@@ -347,7 +348,8 @@ func checkThinkingMode(claudeBody []byte) (bool, int64) {
 	thinkingField := gjson.GetBytes(claudeBody, "thinking")
 	if thinkingField.Exists() {
 		thinkingType := thinkingField.Get("type").String()
-		if thinkingType == "enabled" {
+		switch thinkingType {
+		case "enabled", "adaptive", "auto":
 			thinkingEnabled = true
 			if bt := thinkingField.Get("budget_tokens"); bt.Exists() {
 				budgetTokens = bt.Int()
@@ -357,7 +359,7 @@ func checkThinkingMode(claudeBody []byte) (bool, int64) {
 				}
 			}
 			if thinkingEnabled {
-				log.Debugf("kiro: thinking mode enabled via Claude API parameter, budget_tokens: %d", budgetTokens)
+				log.Debugf("kiro: thinking mode enabled via Claude API parameter (type=%s), budget_tokens: %d", thinkingType, budgetTokens)
 			}
 		}
 	}
@@ -396,7 +398,7 @@ func IsThinkingEnabledFromHeader(headers http.Header) bool {
 // treated as regular text content, not as thinking blocks.
 //
 // Supports multiple formats:
-// - Claude API format: thinking.type = "enabled"
+// - Claude API format: thinking.type = "enabled", "adaptive", or "auto"
 // - OpenAI format: reasoning_effort parameter
 // - AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
 func IsThinkingEnabled(body []byte) bool {
@@ -405,7 +407,7 @@ func IsThinkingEnabled(body []byte) bool {
 
 // IsThinkingEnabledWithHeaders checks if thinking mode is enabled from body or headers.
 // This is the comprehensive check that supports all thinking detection methods:
-// - Claude API format: thinking.type = "enabled"
+// - Claude API format: thinking.type = "enabled", "adaptive", or "auto"
 // - OpenAI format: reasoning_effort parameter
 // - AMP/Cursor format: <thinking_mode>interleaved</thinking_mode> in system prompt
 // - Anthropic-Beta header: interleaved-thinking-2025-05-14
