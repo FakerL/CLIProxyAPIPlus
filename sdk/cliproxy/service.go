@@ -1951,6 +1951,9 @@ func convertKiroAPIModels(apiModels []*kiroauth.KiroModel) []*ModelInfo {
 		if m.MaxInputTokens > 0 {
 			info.ContextLength = m.MaxInputTokens
 		}
+		if m.MaxOutputTokens > 0 {
+			info.MaxCompletionTokens = m.MaxOutputTokens
+		}
 
 		models = append(models, info)
 	}

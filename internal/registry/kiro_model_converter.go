@@ -26,6 +26,8 @@ type KiroAPIModel struct {
 	RateUnit string
 	// MaxInputTokens is the maximum input token limit
 	MaxInputTokens int
+	// MaxOutputTokens is the maximum output token limit
+	MaxOutputTokens int
 }
 
 // DefaultKiroThinkingSupport defines the default thinking configuration for Kiro models.
@@ -87,7 +89,7 @@ func ConvertKiroAPIModels(kiroModels []*KiroAPIModel) []*ModelInfo {
 			Description: km.Description,
 			// Use MaxInputTokens from API if available, otherwise use default
 			ContextLength:       getContextLength(km.MaxInputTokens),
-			MaxCompletionTokens: DefaultKiroMaxCompletionTokens,
+			MaxCompletionTokens: getMaxCompletionTokens(km.MaxOutputTokens),
 			// All Kiro models support thinking
 			Thinking: cloneThinkingSupport(DefaultKiroThinkingSupport),
 		}
@@ -299,6 +301,14 @@ func getContextLength(maxInputTokens int) int {
 		return maxInputTokens
 	}
 	return DefaultKiroContextLength
+}
+
+// getMaxCompletionTokens returns the max completion tokens, using default if not provided.
+func getMaxCompletionTokens(maxOutputTokens int) int {
+	if maxOutputTokens > 0 {
+		return maxOutputTokens
+	}
+	return DefaultKiroMaxCompletionTokens
 }
 
 // cloneThinkingSupport creates a deep copy of ThinkingSupport.
