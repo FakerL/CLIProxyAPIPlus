@@ -702,10 +702,19 @@ func GetKiroModels() []*ModelInfo {
 	now := int64(1732752000) // 2024-11-27
 	endpoints := []string{"/chat/completions", "/messages"}
 	entries := []struct {
-		id          string
-		displayName string
-		description string
+		id                  string
+		displayName         string
+		description         string
+		contextLength       int
+		maxCompletionTokens int
 	}{
+		{
+			id:                  "kiro-claude-sonnet-5",
+			displayName:         "Claude Sonnet 5",
+			description:         "Claude Sonnet 5 via Kiro",
+			contextLength:       1000000,
+			maxCompletionTokens: 64000,
+		},
 		{
 			id:          "kiro-claude-sonnet-4-6",
 			displayName: "Claude Sonnet 4.6",
@@ -722,9 +731,11 @@ func GetKiroModels() []*ModelInfo {
 			description: "Claude Sonnet 4 via Kiro",
 		},
 		{
-			id:          "kiro-claude-opus-4-7",
-			displayName: "Claude Opus 4.7",
-			description: "Claude Opus 4.7 via Kiro",
+			id:                  "kiro-claude-opus-4-7",
+			displayName:         "Claude Opus 4.7",
+			description:         "Claude Opus 4.7 via Kiro",
+			contextLength:       1000000,
+			maxCompletionTokens: 128000,
 		},
 		{
 			id:          "kiro-claude-opus-4-6",
@@ -745,6 +756,14 @@ func GetKiroModels() []*ModelInfo {
 
 	models := make([]*ModelInfo, 0, len(entries))
 	for _, entry := range entries {
+		contextLength := entry.contextLength
+		if contextLength == 0 {
+			contextLength = 200000
+		}
+		maxCompletionTokens := entry.maxCompletionTokens
+		if maxCompletionTokens == 0 {
+			maxCompletionTokens = 64000
+		}
 		models = append(models, &ModelInfo{
 			ID:                  entry.id,
 			Object:              "model",
@@ -753,8 +772,8 @@ func GetKiroModels() []*ModelInfo {
 			Type:                "kiro",
 			DisplayName:         entry.displayName,
 			Description:         entry.description,
-			ContextLength:       200000,
-			MaxCompletionTokens: 64000,
+			ContextLength:       contextLength,
+			MaxCompletionTokens: maxCompletionTokens,
 			SupportedEndpoints:  endpoints,
 			Thinking:            cloneThinkingSupport(DefaultKiroThinkingSupport),
 		})
