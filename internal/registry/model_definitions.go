@@ -644,7 +644,38 @@ func GetGitHubCopilotModels() []*ModelInfo {
 // place where agentic variants are layered on top of whatever the API
 // returns.
 func GetKiroModels() []*ModelInfo {
-	return []*ModelInfo{}
+	// Static overrides for models with specs that differ from API defaults.
+	// These take priority over API-discovered models via MergeWithStaticMetadata().
+	//
+	// Note: The API now returns correct maxInputTokens and maxOutputTokens for most models.
+	// We only need overrides for models where the API reports incorrect values.
+	return []*ModelInfo{
+		// opus-4.7: API reports 64k output, but actual limit is 128k
+		{
+			ID:                  "kiro-claude-opus-4-7",
+			Object:              "model",
+			Created:             1744848000, // 2025-04-17
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro Claude Opus 4.7",
+			Description:         "Claude Opus 4.7 via Kiro (2.2x credit, 1M context)",
+			ContextLength:       1000000,
+			MaxCompletionTokens: 128000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
+		},
+		{
+			ID:                  "kiro-claude-opus-4-7-agentic",
+			Object:              "model",
+			Created:             1744848000,
+			OwnedBy:             "aws",
+			Type:                "kiro",
+			DisplayName:         "Kiro Claude Opus 4.7 (Agentic)",
+			Description:         "Claude Opus 4.7 optimized for coding agents (1M context, chunked writes)",
+			ContextLength:       1000000,
+			MaxCompletionTokens: 128000,
+			Thinking:            &ThinkingSupport{Min: 1024, Max: 32000, ZeroAllowed: true, DynamicAllowed: true},
+		},
+	}
 }
 
 // GetAmazonQModels returns the Amazon Q (AWS CodeWhisperer) model definitions.
