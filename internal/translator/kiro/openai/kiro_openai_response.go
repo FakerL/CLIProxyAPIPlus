@@ -72,6 +72,18 @@ func BuildOpenAIResponseWithReasoning(content, reasoningContent string, toolUses
 		log.Debugf("kiro-openai: buildOpenAIResponse using fallback finish_reason: %s", finishReason)
 	}
 
+	promptTokens, completionTokens, totalTokens, cachedTokens := openAIUsageCounts(usageInfo)
+	usagePayload := map[string]interface{}{
+		"prompt_tokens":     promptTokens,
+		"completion_tokens": completionTokens,
+		"total_tokens":      totalTokens,
+	}
+	if cachedTokens > 0 {
+		usagePayload["prompt_tokens_details"] = map[string]interface{}{
+			"cached_tokens": cachedTokens,
+		}
+	}
+
 	response := map[string]interface{}{
 		"id":      "chatcmpl-" + uuid.New().String()[:24],
 		"object":  "chat.completion",
@@ -84,11 +96,7 @@ func BuildOpenAIResponseWithReasoning(content, reasoningContent string, toolUses
 				"finish_reason": finishReason,
 			},
 		},
-		"usage": map[string]interface{}{
-			"prompt_tokens":     usageInfo.InputTokens,
-			"completion_tokens": usageInfo.OutputTokens,
-			"total_tokens":      usageInfo.InputTokens + usageInfo.OutputTokens,
-		},
+		"usage": usagePayload,
 	}
 
 	result, _ := json.Marshal(response)
@@ -111,6 +119,20 @@ func mapKiroStopReasonToOpenAI(stopReason string) string {
 	default:
 		return stopReason
 	}
+}
+
+func openAIUsageCounts(usageInfo usage.Detail) (promptTokens, completionTokens, totalTokens, cachedTokens int64) {
+	cachedTokens = usageInfo.CacheReadTokens
+	if cachedTokens == 0 {
+		cachedTokens = usageInfo.CachedTokens
+	}
+	promptTokens = usageInfo.InputTokens + usageInfo.CacheCreationTokens + cachedTokens
+	completionTokens = usageInfo.OutputTokens
+	totalTokens = usageInfo.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = promptTokens + completionTokens + usageInfo.ReasoningTokens
+	}
+	return promptTokens, completionTokens, totalTokens, cachedTokens
 }
 
 // BuildOpenAIStreamChunk constructs an OpenAI Chat Completions streaming chunk.
@@ -246,17 +268,25 @@ func BuildOpenAIStreamFinishChunk(model string, finishReason string) []byte {
 
 // BuildOpenAIStreamUsageChunk creates a chunk with usage information (optional, for stream_options.include_usage)
 func BuildOpenAIStreamUsageChunk(model string, usageInfo usage.Detail) []byte {
+	promptTokens, completionTokens, totalTokens, cachedTokens := openAIUsageCounts(usageInfo)
+	usagePayload := map[string]interface{}{
+		"prompt_tokens":     promptTokens,
+		"completion_tokens": completionTokens,
+		"total_tokens":      totalTokens,
+	}
+	if cachedTokens > 0 {
+		usagePayload["prompt_tokens_details"] = map[string]interface{}{
+			"cached_tokens": cachedTokens,
+		}
+	}
+
 	chunk := map[string]interface{}{
 		"id":      "chatcmpl-" + uuid.New().String()[:12],
 		"object":  "chat.completion.chunk",
 		"created": time.Now().Unix(),
 		"model":   model,
 		"choices": []map[string]interface{}{},
-		"usage": map[string]interface{}{
-			"prompt_tokens":     usageInfo.InputTokens,
-			"completion_tokens": usageInfo.OutputTokens,
-			"total_tokens":      usageInfo.InputTokens + usageInfo.OutputTokens,
-		},
+		"usage":   usagePayload,
 	}
 
 	result, _ := json.Marshal(chunk)

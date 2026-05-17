@@ -103,12 +103,20 @@ func (r *UsageReporter) publishWithOutcome(ctx context.Context, detail usage.Det
 
 func normalizeUsageDetailTotal(detail usage.Detail) usage.Detail {
 	if detail.TotalTokens == 0 {
-		total := detail.InputTokens + detail.OutputTokens + detail.ReasoningTokens
+		total := usageDetailTotal(detail)
 		if total > 0 {
 			detail.TotalTokens = total
 		}
 	}
 	return detail
+}
+
+func usageDetailTotal(detail usage.Detail) int64 {
+	total := detail.InputTokens + detail.OutputTokens + detail.ReasoningTokens + detail.CacheReadTokens + detail.CacheCreationTokens
+	if total == 0 {
+		total = detail.InputTokens + detail.OutputTokens + detail.ReasoningTokens + detail.CachedTokens
+	}
+	return total
 }
 
 func hasNonZeroTokenUsage(detail usage.Detail) bool {
@@ -386,7 +394,7 @@ func parseClaudeUsageNode(usageNode gjson.Result) usage.Detail {
 	if detail.CachedTokens == 0 {
 		detail.CachedTokens = detail.CacheCreationTokens
 	}
-	detail.TotalTokens = detail.InputTokens + detail.OutputTokens
+	detail.TotalTokens = usageDetailTotal(detail)
 	return detail
 }
 
