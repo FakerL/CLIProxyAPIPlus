@@ -59,10 +59,10 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		TotalTokens:         record.Detail.TotalTokens,
 	}
 	if tokens.TotalTokens == 0 {
-		tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens + tokens.ReasoningTokens
-	}
-	if tokens.TotalTokens == 0 {
-		tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens + tokens.ReasoningTokens + tokens.CachedTokens
+		tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens + tokens.ReasoningTokens + tokens.CacheReadTokens + tokens.CacheCreationTokens
+		if tokens.TotalTokens == 0 {
+			tokens.TotalTokens = tokens.InputTokens + tokens.OutputTokens + tokens.ReasoningTokens + tokens.CachedTokens
+		}
 	}
 
 	failed := record.Failed

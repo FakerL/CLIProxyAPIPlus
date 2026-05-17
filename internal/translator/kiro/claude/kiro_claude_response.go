@@ -99,6 +99,19 @@ func BuildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 		log.Warnf("kiro: response truncated due to max_tokens limit (buildClaudeResponse)")
 	}
 
+	usagePayload := map[string]interface{}{
+		"input_tokens":  usageInfo.InputTokens,
+		"output_tokens": usageInfo.OutputTokens,
+	}
+	if usageInfo.CacheReadTokens > 0 {
+		usagePayload["cache_read_input_tokens"] = usageInfo.CacheReadTokens
+	} else if usageInfo.CachedTokens > 0 {
+		usagePayload["cache_read_input_tokens"] = usageInfo.CachedTokens
+	}
+	if usageInfo.CacheCreationTokens > 0 {
+		usagePayload["cache_creation_input_tokens"] = usageInfo.CacheCreationTokens
+	}
+
 	response := map[string]interface{}{
 		"id":          "msg_" + uuid.New().String()[:24],
 		"type":        "message",
@@ -106,10 +119,7 @@ func BuildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 		"model":       model,
 		"content":     contentBlocks,
 		"stop_reason": stopReason,
-		"usage": map[string]interface{}{
-			"input_tokens":  usageInfo.InputTokens,
-			"output_tokens": usageInfo.OutputTokens,
-		},
+		"usage":       usagePayload,
 	}
 	result, _ := json.Marshal(response)
 	return result

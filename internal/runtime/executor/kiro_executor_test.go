@@ -1,11 +1,14 @@
 package executor
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"testing"
 
 	kiroauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kiro"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
 func TestBuildKiroEndpointConfigs(t *testing.T) {
@@ -493,4 +496,170 @@ func TestMapModelToKiro_MapsClaudeOpus47Variants(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseEventStreamTokenUsagePreservesKiroCacheFields(t *testing.T) {
+	executor := &KiroExecutor{}
+	stream := bytes.NewBuffer(nil)
+	stream.Write(kiroEventStreamFrame("assistantResponseEvent", []byte(`{"assistantResponseEvent":{"content":"pong"}}`)))
+	stream.Write(kiroEventStreamFrame("messageMetadataEvent", []byte(`{"messageMetadataEvent":{"tokenUsage":{"uncachedInputTokens":13,"cacheReadInputTokens":22000,"cacheWriteInputTokens":31,"outputTokens":4,"totalTokens":22048,"contextUsagePercentage":3.61}}}`)))
+
+	content, _, usageInfo, _, billingSignals, err := executor.parseEventStream(stream)
+	if err != nil {
+		t.Fatalf("parseEventStream() error = %v", err)
+	}
+	if !billingSignals.HasTokenUsage {
+		t.Fatal("expected tokenUsage billing signal")
+	}
+	if content != "pong" {
+		t.Fatalf("content = %q, want %q", content, "pong")
+	}
+	if usageInfo.InputTokens != 13 {
+		t.Fatalf("input tokens = %d, want uncached input tokens 13", usageInfo.InputTokens)
+	}
+	if usageInfo.CacheReadTokens != 22000 {
+		t.Fatalf("cache read tokens = %d, want 22000", usageInfo.CacheReadTokens)
+	}
+	if usageInfo.CacheCreationTokens != 31 {
+		t.Fatalf("cache creation tokens = %d, want 31", usageInfo.CacheCreationTokens)
+	}
+	if usageInfo.CachedTokens != 22000 {
+		t.Fatalf("cached tokens = %d, want 22000", usageInfo.CachedTokens)
+	}
+	if usageInfo.OutputTokens != 4 {
+		t.Fatalf("output tokens = %d, want 4", usageInfo.OutputTokens)
+	}
+	if usageInfo.TotalTokens != 22048 {
+		t.Fatalf("total tokens = %d, want upstream total 22048", usageInfo.TotalTokens)
+	}
+}
+
+func TestParseEventStreamWithoutTokenUsageOnlyCapturesBillingSignals(t *testing.T) {
+	executor := &KiroExecutor{}
+	stream := bytes.NewBuffer(nil)
+	stream.Write(kiroEventStreamFrame("assistantResponseEvent", []byte(`{"assistantResponseEvent":{"content":"pong"}}`)))
+	stream.Write(kiroEventStreamFrame("contextUsageEvent", []byte(`{"contextUsageEvent":{"contextUsagePercentage":19.332000732421875}}`)))
+	stream.Write(kiroEventStreamFrame("meteringEvent", []byte(`{"meteringEvent":{"unit":"credit","usage":0.08355490150912107}}`)))
+
+	_, _, usageInfo, _, billingSignals, err := executor.parseEventStream(stream)
+	if err != nil {
+		t.Fatalf("parseEventStream() error = %v", err)
+	}
+	if billingSignals.HasTokenUsage {
+		t.Fatal("did not expect tokenUsage billing signal")
+	}
+	if !billingSignals.HasCreditUsage {
+		t.Fatal("expected credit usage billing signal")
+	}
+	if usageInfo.CacheReadTokens != 0 || usageInfo.CacheCreationTokens != 0 {
+		t.Fatalf("parseEventStream should not add missing Kiro cache fields, got read=%d create=%d", usageInfo.CacheReadTokens, usageInfo.CacheCreationTokens)
+	}
+	if usageInfo.InputTokens != 0 {
+		t.Fatalf("parseEventStream should leave input tokens unset before billing inference, got %d", usageInfo.InputTokens)
+	}
+}
+
+func TestInferKiroBillingUsageFirstWrite(t *testing.T) {
+	got, ok := inferKiroBillingUsage("claude-sonnet-4.5", usage.Detail{OutputTokens: 1}, kiroBillingSignals{
+		ContextPercentage: 19.332000732421875,
+		CreditUsage:       0.15851445374792705,
+		HasCreditUsage:    true,
+	})
+	if !ok {
+		t.Fatal("expected billing usage inference")
+	}
+	if got.InputTokens != 38664 {
+		t.Fatalf("input tokens = %d, want 38664", got.InputTokens)
+	}
+	if got.CacheReadTokens != 0 {
+		t.Fatalf("cache read tokens = %d, want 0", got.CacheReadTokens)
+	}
+	if got.OutputTokens != 1 {
+		t.Fatalf("output tokens = %d, want 1", got.OutputTokens)
+	}
+}
+
+func TestInferKiroBillingUsageCacheRead(t *testing.T) {
+	got, ok := inferKiroBillingUsage("claude-sonnet-4.5", usage.Detail{OutputTokens: 1}, kiroBillingSignals{
+		ContextPercentage: 19.332000732421875,
+		CreditUsage:       0.08355490150912107,
+		HasCreditUsage:    true,
+	})
+	if !ok {
+		t.Fatal("expected billing usage inference")
+	}
+	if got.InputTokens != 0 {
+		t.Fatalf("input tokens = %d, want 0", got.InputTokens)
+	}
+	if got.CacheReadTokens != 38664 {
+		t.Fatalf("cache read tokens = %d, want 38664", got.CacheReadTokens)
+	}
+	if got.CachedTokens != 38664 {
+		t.Fatalf("cached tokens = %d, want 38664", got.CachedTokens)
+	}
+}
+
+func TestInferKiroBillingUsageInfersOutputWhenUncached(t *testing.T) {
+	rates, ok := kiroBillingRatesForModel("claude-haiku-4.5")
+	if !ok {
+		t.Fatal("missing haiku rates")
+	}
+	contextPercentage := 5.0
+	contextTokens := int64(10000)
+	credits := float64(contextTokens)*rates.InputPerToken + 42*rates.OutputPerToken
+
+	got, ok := inferKiroBillingUsage("claude-haiku-4.5", usage.Detail{}, kiroBillingSignals{
+		ContextPercentage: contextPercentage,
+		CreditUsage:       credits,
+		HasCreditUsage:    true,
+	})
+	if !ok {
+		t.Fatal("expected billing usage inference")
+	}
+	if got.InputTokens != contextTokens {
+		t.Fatalf("input tokens = %d, want %d", got.InputTokens, contextTokens)
+	}
+	if got.OutputTokens != 42 {
+		t.Fatalf("output tokens = %d, want 42", got.OutputTokens)
+	}
+	if got.CacheReadTokens != 0 {
+		t.Fatalf("cache read tokens = %d, want 0", got.CacheReadTokens)
+	}
+}
+
+func TestKiroBillingRatesMatchClientModelAliases(t *testing.T) {
+	for _, model := range []string{
+		"kiro-claude-sonnet-4-5",
+		"kiro-claude-haiku-4-5",
+		"kiro-claude-sonnet-4-6",
+		"kiro-claude-opus-4-6",
+		"kiro-claude-opus-4-7",
+		"claude-sonnet-4-5-20250929",
+		"claude-haiku-4-5-20251001",
+	} {
+		t.Run(model, func(t *testing.T) {
+			if _, ok := kiroBillingRatesForModel(model); !ok {
+				t.Fatalf("expected billing rates for %s", model)
+			}
+		})
+	}
+}
+
+func kiroEventStreamFrame(eventType string, payload []byte) []byte {
+	headerName := ":event-type"
+	headers := make([]byte, 0, 1+len(headerName)+1+2+len(eventType))
+	headers = append(headers, byte(len(headerName)))
+	headers = append(headers, headerName...)
+	headers = append(headers, 7)
+	headers = binary.BigEndian.AppendUint16(headers, uint16(len(eventType)))
+	headers = append(headers, eventType...)
+
+	totalLength := uint32(12 + len(headers) + len(payload) + 4)
+	frame := make([]byte, 12, totalLength)
+	binary.BigEndian.PutUint32(frame[0:4], totalLength)
+	binary.BigEndian.PutUint32(frame[4:8], uint32(len(headers)))
+	frame = append(frame, headers...)
+	frame = append(frame, payload...)
+	frame = binary.BigEndian.AppendUint32(frame, 0)
+	return frame
 }
