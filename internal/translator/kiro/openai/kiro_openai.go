@@ -144,13 +144,7 @@ func ConvertKiroStreamToOpenAI(ctx context.Context, model string, originalReques
 
 		// Extract usage if present
 		if eventJSON.Get("usage").Exists() {
-			inputTokens := eventJSON.Get("usage.input_tokens").Int()
-			outputTokens := eventJSON.Get("usage.output_tokens").Int()
-			usageInfo := usage.Detail{
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
-				TotalTokens:  inputTokens + outputTokens,
-			}
+			usageInfo := kiroClaudeUsageDetail(eventJSON.Get("usage"))
 			chunk := BuildOpenAISSEUsage(state, usageInfo)
 			results = append(results, []byte(chunk))
 		}
@@ -163,13 +157,7 @@ func ConvertKiroStreamToOpenAI(ctx context.Context, model string, originalReques
 	case "ping":
 		// Ping event with usage - optionally emit usage chunk
 		if eventJSON.Get("usage").Exists() {
-			inputTokens := eventJSON.Get("usage.input_tokens").Int()
-			outputTokens := eventJSON.Get("usage.output_tokens").Int()
-			usageInfo := usage.Detail{
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
-				TotalTokens:  inputTokens + outputTokens,
-			}
+			usageInfo := kiroClaudeUsageDetail(eventJSON.Get("usage"))
 			chunk := BuildOpenAISSEUsage(state, usageInfo)
 			results = append(results, []byte(chunk))
 		}
@@ -230,14 +218,35 @@ func ConvertKiroNonStreamToOpenAI(ctx context.Context, model string, originalReq
 
 	// Extract usage
 	usageInfo := usage.Detail{
-		InputTokens:  response.Get("usage.input_tokens").Int(),
-		OutputTokens: response.Get("usage.output_tokens").Int(),
+		InputTokens:         response.Get("usage.input_tokens").Int(),
+		OutputTokens:        response.Get("usage.output_tokens").Int(),
+		CacheReadTokens:     response.Get("usage.cache_read_input_tokens").Int(),
+		CacheCreationTokens: response.Get("usage.cache_creation_input_tokens").Int(),
 	}
-	usageInfo.TotalTokens = usageInfo.InputTokens + usageInfo.OutputTokens
+	usageInfo.CachedTokens = usageInfo.CacheReadTokens
+	if usageInfo.CachedTokens == 0 {
+		usageInfo.CachedTokens = usageInfo.CacheCreationTokens
+	}
+	usageInfo.TotalTokens = usageInfo.InputTokens + usageInfo.OutputTokens + usageInfo.CacheReadTokens + usageInfo.CacheCreationTokens
 
 	// Build OpenAI response with reasoning_content support
 	openaiResponse := BuildOpenAIResponseWithReasoning(content, reasoningContent, toolUses, model, usageInfo, stopReason)
 	return openaiResponse
+}
+
+func kiroClaudeUsageDetail(usageNode gjson.Result) usage.Detail {
+	detail := usage.Detail{
+		InputTokens:         usageNode.Get("input_tokens").Int(),
+		OutputTokens:        usageNode.Get("output_tokens").Int(),
+		CacheReadTokens:     usageNode.Get("cache_read_input_tokens").Int(),
+		CacheCreationTokens: usageNode.Get("cache_creation_input_tokens").Int(),
+	}
+	detail.CachedTokens = detail.CacheReadTokens
+	if detail.CachedTokens == 0 {
+		detail.CachedTokens = detail.CacheCreationTokens
+	}
+	detail.TotalTokens = detail.InputTokens + detail.OutputTokens + detail.CacheReadTokens + detail.CacheCreationTokens
+	return detail
 }
 
 // ParseClaudeEvent parses a Claude SSE event and returns the event type and data

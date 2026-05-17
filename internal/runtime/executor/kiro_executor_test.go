@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"testing"
 
@@ -493,4 +495,56 @@ func TestMapModelToKiro_MapsClaudeOpus47Variants(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseEventStreamTokenUsagePreservesKiroCacheFields(t *testing.T) {
+	executor := &KiroExecutor{}
+	stream := bytes.NewBuffer(nil)
+	stream.Write(kiroEventStreamFrame("assistantResponseEvent", []byte(`{"assistantResponseEvent":{"content":"pong"}}`)))
+	stream.Write(kiroEventStreamFrame("messageMetadataEvent", []byte(`{"messageMetadataEvent":{"tokenUsage":{"uncachedInputTokens":13,"cacheReadInputTokens":22000,"cacheWriteInputTokens":31,"outputTokens":4,"totalTokens":22048,"contextUsagePercentage":3.61}}}`)))
+
+	content, _, usageInfo, _, err := executor.parseEventStream(stream)
+	if err != nil {
+		t.Fatalf("parseEventStream() error = %v", err)
+	}
+	if content != "pong" {
+		t.Fatalf("content = %q, want %q", content, "pong")
+	}
+	if usageInfo.InputTokens != 13 {
+		t.Fatalf("input tokens = %d, want uncached input tokens 13", usageInfo.InputTokens)
+	}
+	if usageInfo.CacheReadTokens != 22000 {
+		t.Fatalf("cache read tokens = %d, want 22000", usageInfo.CacheReadTokens)
+	}
+	if usageInfo.CacheCreationTokens != 31 {
+		t.Fatalf("cache creation tokens = %d, want 31", usageInfo.CacheCreationTokens)
+	}
+	if usageInfo.CachedTokens != 22000 {
+		t.Fatalf("cached tokens = %d, want 22000", usageInfo.CachedTokens)
+	}
+	if usageInfo.OutputTokens != 4 {
+		t.Fatalf("output tokens = %d, want 4", usageInfo.OutputTokens)
+	}
+	if usageInfo.TotalTokens != 22048 {
+		t.Fatalf("total tokens = %d, want upstream total 22048", usageInfo.TotalTokens)
+	}
+}
+
+func kiroEventStreamFrame(eventType string, payload []byte) []byte {
+	headerName := ":event-type"
+	headers := make([]byte, 0, 1+len(headerName)+1+2+len(eventType))
+	headers = append(headers, byte(len(headerName)))
+	headers = append(headers, headerName...)
+	headers = append(headers, 7)
+	headers = binary.BigEndian.AppendUint16(headers, uint16(len(eventType)))
+	headers = append(headers, eventType...)
+
+	totalLength := uint32(12 + len(headers) + len(payload) + 4)
+	frame := make([]byte, 12, totalLength)
+	binary.BigEndian.PutUint32(frame[0:4], totalLength)
+	binary.BigEndian.PutUint32(frame[4:8], uint32(len(headers)))
+	frame = append(frame, headers...)
+	frame = append(frame, payload...)
+	frame = binary.BigEndian.AppendUint32(frame, 0)
+	return frame
 }
