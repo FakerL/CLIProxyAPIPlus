@@ -685,6 +685,26 @@ func TestInferKiroBillingUsageCacheRead(t *testing.T) {
 	}
 }
 
+func TestInferKiroBillingUsageOpus48CacheRead(t *testing.T) {
+	got, ok := inferKiroBillingUsage("kiro-claude-opus-4-8", usage.Detail{OutputTokens: 1}, kiroBillingSignals{
+		ContextPercentage: 1.8154001235961914,
+		CreditUsage:       0.06725680490878938,
+		HasCreditUsage:    true,
+	})
+	if !ok {
+		t.Fatal("expected billing usage inference")
+	}
+	if got.InputTokens != 0 {
+		t.Fatalf("input tokens = %d, want 0", got.InputTokens)
+	}
+	if got.CacheReadTokens != 3631 {
+		t.Fatalf("cache read tokens = %d, want 3631", got.CacheReadTokens)
+	}
+	if got.OutputTokens != 1 {
+		t.Fatalf("output tokens = %d, want 1", got.OutputTokens)
+	}
+}
+
 func TestInferKiroBillingUsageInfersOutputWhenUncached(t *testing.T) {
 	rates, ok := kiroBillingRatesForModel("claude-haiku-4.5")
 	if !ok {
@@ -720,8 +740,10 @@ func TestKiroBillingRatesMatchClientModelAliases(t *testing.T) {
 		"kiro-claude-sonnet-4-6",
 		"kiro-claude-opus-4-6",
 		"kiro-claude-opus-4-7",
+		"kiro-claude-opus-4-8",
 		"claude-sonnet-4-5-20250929",
 		"claude-haiku-4-5-20251001",
+		"claude-opus-4-8",
 	} {
 		t.Run(model, func(t *testing.T) {
 			if _, ok := kiroBillingRatesForModel(model); !ok {

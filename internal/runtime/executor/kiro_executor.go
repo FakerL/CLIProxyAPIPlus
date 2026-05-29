@@ -2385,6 +2385,7 @@ func kiroBillingRatesForModel(model string) (kiroBillingRates, bool) {
 	normalized = strings.ReplaceAll(normalized, "4-5", "4.5")
 	normalized = strings.ReplaceAll(normalized, "4-6", "4.6")
 	normalized = strings.ReplaceAll(normalized, "4-7", "4.7")
+	normalized = strings.ReplaceAll(normalized, "4-8", "4.8")
 
 	switch {
 	case strings.Contains(normalized, "haiku") && strings.Contains(normalized, "4.5"):
@@ -2397,6 +2398,8 @@ func kiroBillingRatesForModel(model string) (kiroBillingRates, bool) {
 		return kiroBillingRates{InputPerToken: 0.03466003 / 1000, CachePerToken: 0.01869010 / 1000, OutputPerToken: 0.24305695 / 1000}, true
 	case strings.Contains(normalized, "opus") && strings.Contains(normalized, "4.7"):
 		return kiroBillingRates{InputPerToken: 0.03466003 / 1000, CachePerToken: 0.01873880 / 1000, OutputPerToken: 0.50347511 / 1000}, true
+	case strings.Contains(normalized, "opus") && strings.Contains(normalized, "4.8"):
+		return kiroBillingRates{InputPerToken: 0.03466003 / 1000, CachePerToken: 0.01838529 / 1000, OutputPerToken: 0.50347511 / 1000}, true
 	default:
 		return kiroBillingRates{}, false
 	}
