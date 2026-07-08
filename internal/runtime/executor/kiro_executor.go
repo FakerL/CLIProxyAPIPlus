@@ -2390,6 +2390,8 @@ func kiroBillingRatesForModel(model string) (kiroBillingRates, bool) {
 	switch {
 	case strings.Contains(normalized, "haiku") && strings.Contains(normalized, "4.5"):
 		return kiroBillingRates{InputPerToken: 0.00126036 / 1000, CachePerToken: 0.00066650 / 1000, OutputPerToken: 0.04843575 / 1000}, true
+	case strings.Contains(normalized, "sonnet-5"):
+		return kiroBillingRates{InputPerToken: 0.02048093 / 1000, CachePerToken: 0.01083063 / 1000, OutputPerToken: 0.29750807 / 1000}, true
 	case strings.Contains(normalized, "sonnet") && strings.Contains(normalized, "4.5"):
 		return kiroBillingRates{InputPerToken: 0.00409619 / 1000, CachePerToken: 0.00216613 / 1000, OutputPerToken: 0.14554600 / 1000}, true
 	case strings.Contains(normalized, "sonnet") && strings.Contains(normalized, "4.6"):
