@@ -2402,6 +2402,8 @@ func kiroBillingRatesForModel(model string) (kiroBillingRates, bool) {
 		return kiroBillingRates{InputPerToken: 0.03466003 / 1000, CachePerToken: 0.01873880 / 1000, OutputPerToken: 0.50347511 / 1000}, true
 	case strings.Contains(normalized, "opus") && strings.Contains(normalized, "4.8"):
 		return kiroBillingRates{InputPerToken: 0.03466003 / 1000, CachePerToken: 0.01838529 / 1000, OutputPerToken: 0.50347511 / 1000}, true
+	case strings.Contains(normalized, "opus-5"):
+		return kiroBillingRates{InputPerToken: 0.03466003 / 1000, CachePerToken: 0.01833878 / 1000, OutputPerToken: 0.50347511 / 1000}, true
 	default:
 		return kiroBillingRates{}, false
 	}
