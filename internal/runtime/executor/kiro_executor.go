@@ -33,6 +33,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 const (
@@ -483,21 +485,57 @@ type kiroBillingRates struct {
 // - Claude: tools[].name, tools[].description
 // headers parameter allows checking Anthropic-Beta header for thinking mode detection.
 // Returns the serialized JSON payload and a boolean indicating whether thinking mode was injected.
-func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, sourceFormat sdktranslator.Format, headers http.Header) ([]byte, bool) {
+func buildKiroPayloadForFormat(body, originalRequest []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, sourceFormat sdktranslator.Format, headers http.Header) ([]byte, bool) {
 	log.Debugf("kiro: buildKiroPayloadForFormat called, sourceFormat=%s, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", sourceFormat.String(), modelID, origin, isAgentic, isChatOnly)
+	var payload []byte
+	var thinkingEnabled bool
 	switch sourceFormat.String() {
 	case "openai":
 		log.Debugf("kiro: using OpenAI payload builder for source format: %s", sourceFormat.String())
-		return kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin, isAgentic, isChatOnly, headers, nil)
+		payload, thinkingEnabled = kiroopenai.BuildKiroPayloadFromOpenAI(body, modelID, profileArn, origin, isAgentic, isChatOnly, headers, nil)
 	case "kiro":
 		// Body is already in Kiro format — pass through directly
 		log.Debugf("kiro: body already in Kiro format, passing through directly")
-		return body, false
+		payload = body
 	default:
 		// Default to Claude format
 		log.Debugf("kiro: using Claude payload builder for source format: %s", sourceFormat.String())
-		return kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin, isAgentic, isChatOnly, headers, nil)
+		payload, thinkingEnabled = kiroclaude.BuildKiroPayload(body, modelID, profileArn, origin, isAgentic, isChatOnly, headers, nil)
 	}
+
+	var effortInjected bool
+	payload, effortInjected = injectKiroGPT56ReasoningEffort(payload, originalRequest, modelID)
+	return payload, thinkingEnabled || effortInjected
+}
+
+func injectKiroGPT56ReasoningEffort(payload, originalRequest []byte, modelID string) ([]byte, bool) {
+	switch strings.ToLower(strings.TrimSpace(modelID)) {
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+	default:
+		return payload, false
+	}
+
+	effort := gjson.GetBytes(originalRequest, "reasoning.effort")
+	if effort.Type != gjson.String {
+		effort = gjson.GetBytes(originalRequest, "reasoning_effort")
+	}
+	if effort.Type != gjson.String {
+		return payload, false
+	}
+
+	normalizedEffort := strings.ToLower(strings.TrimSpace(effort.String()))
+	switch normalizedEffort {
+	case "low", "medium", "high", "xhigh":
+	default:
+		return payload, false
+	}
+
+	updated, err := sjson.SetBytes(payload, "additionalModelRequestFields.reasoning.effort", normalizedEffort)
+	if err != nil {
+		log.Debugf("kiro: failed to inject GPT-5.6 reasoning effort: %v", err)
+		return payload, false
+	}
+	return updated, true
 }
 
 // NewKiroExecutor creates a new Kiro executor instance.
@@ -723,7 +761,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload, _ = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
+		kiroPayload, _ = buildKiroPayloadForFormat(body, opts.OriginalRequest, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
 
 		log.Debugf("kiro: trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -889,7 +927,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload, _ = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
+					kiroPayload, _ = buildKiroPayloadForFormat(body, opts.OriginalRequest, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -956,7 +994,7 @@ func (e *KiroExecutor) executeWithRetry(ctx context.Context, auth *cliproxyauth.
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload, _ = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
+						kiroPayload, _ = buildKiroPayloadForFormat(body, opts.OriginalRequest, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
 						log.Infof("kiro: token refreshed for 403, retrying request")
 						continue
 					}
@@ -1174,7 +1212,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 
 		// Rebuild payload with the correct origin for this endpoint
 		// Each endpoint requires its matching Origin value in the request body
-		kiroPayload, thinkingEnabled := buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
+		kiroPayload, thinkingEnabled := buildKiroPayloadForFormat(body, opts.OriginalRequest, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
 
 		log.Debugf("kiro: stream trying endpoint %d/%d: %s (Name: %s, Origin: %s)",
 			endpointIdx+1, len(endpointConfigs), url, endpointConfig.Name, currentOrigin)
@@ -1340,7 +1378,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 					}
 					accessToken, profileArn = kiroCredentials(auth)
 					// Rebuild payload with new profile ARN if changed
-					kiroPayload, _ = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
+					kiroPayload, _ = buildKiroPayloadForFormat(body, opts.OriginalRequest, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
 					if attempt < maxRetries {
 						log.Infof("kiro: token refreshed successfully, retrying stream request (attempt %d/%d)", attempt+1, maxRetries+1)
 						continue
@@ -1407,7 +1445,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 							// Continue anyway - the token is valid for this request
 						}
 						accessToken, profileArn = kiroCredentials(auth)
-						kiroPayload, _ = buildKiroPayloadForFormat(body, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
+						kiroPayload, _ = buildKiroPayloadForFormat(body, opts.OriginalRequest, kiroModelID, profileArn, currentOrigin, isAgentic, isChatOnly, from, opts.Headers)
 						log.Infof("kiro: token refreshed for 403, retrying stream request")
 						continue
 					}
@@ -2387,8 +2425,15 @@ func kiroBillingRatesForModel(model string) (kiroBillingRates, bool) {
 	normalized = strings.ReplaceAll(normalized, "4-6", "4.6")
 	normalized = strings.ReplaceAll(normalized, "4-7", "4.7")
 	normalized = strings.ReplaceAll(normalized, "4-8", "4.8")
+	normalized = strings.ReplaceAll(normalized, "5-6", "5.6")
 
 	switch {
+	case normalized == "gpt-5.6-sol":
+		return kiroBillingRates{InputPerToken: 0.01028458 / 1000, CachePerToken: 0.00542413 / 1000, OutputPerToken: 0.26515303 / 1000}, true
+	case normalized == "gpt-5.6-terra":
+		return kiroBillingRates{InputPerToken: 0.00428524 / 1000, CachePerToken: 0.00226005 / 1000, OutputPerToken: 0.11048043 / 1000}, true
+	case normalized == "gpt-5.6-luna":
+		return kiroBillingRates{InputPerToken: 0.00042852 / 1000, CachePerToken: 0.00022601 / 1000, OutputPerToken: 0.01104804 / 1000}, true
 	case strings.Contains(normalized, "haiku") && strings.Contains(normalized, "4.5"):
 		return kiroBillingRates{InputPerToken: 0.00126036 / 1000, CachePerToken: 0.00066650 / 1000, OutputPerToken: 0.04843575 / 1000}, true
 	case strings.Contains(normalized, "sonnet-5"):

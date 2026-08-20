@@ -78,6 +78,9 @@ func TestSanitizeOAuthModelAlias_InjectsDefaultKiroAliases(t *testing.T) {
 		aliasSet[a.Alias] = true
 	}
 	expectedAliases := []string{
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
 		"claude-sonnet-5",
 		"claude-sonnet-4-5-20250929",
 		"claude-sonnet-4-5",

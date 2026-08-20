@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"testing"
 
 	kiroauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kiro"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	"github.com/tidwall/gjson"
 )
 
 func TestBuildKiroEndpointConfigs(t *testing.T) {
@@ -859,6 +861,12 @@ func TestInferKiroBillingUsageInfersOutputWhenUncached(t *testing.T) {
 
 func TestKiroBillingRatesMatchClientModelAliases(t *testing.T) {
 	for _, model := range []string{
+		"kiro-gpt-5-6-sol",
+		"kiro-gpt-5-6-terra",
+		"kiro-gpt-5-6-luna",
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
 		"kiro-claude-sonnet-4-5",
 		"kiro-claude-haiku-4-5",
 		"kiro-claude-sonnet-5",
@@ -876,6 +884,114 @@ func TestKiroBillingRatesMatchClientModelAliases(t *testing.T) {
 		t.Run(model, func(t *testing.T) {
 			if _, ok := kiroBillingRatesForModel(model); !ok {
 				t.Fatalf("expected billing rates for %s", model)
+			}
+		})
+	}
+}
+
+func TestKiroGPT56BillingRates(t *testing.T) {
+	tests := []struct {
+		model  string
+		input  float64
+		cache  float64
+		output float64
+	}{
+		{model: "gpt-5.6-sol", input: 0.01028458, cache: 0.00542413, output: 0.26515303},
+		{model: "gpt-5.6-terra", input: 0.00428524, cache: 0.00226005, output: 0.11048043},
+		{model: "gpt-5.6-luna", input: 0.00042852, cache: 0.00022601, output: 0.01104804},
+	}
+
+	for _, test := range tests {
+		t.Run(test.model, func(t *testing.T) {
+			rates, ok := kiroBillingRatesForModel(test.model)
+			if !ok {
+				t.Fatal("expected billing rates")
+			}
+			if math.Abs(rates.InputPerToken*1000-test.input) > 1e-12 || math.Abs(rates.CachePerToken*1000-test.cache) > 1e-12 || math.Abs(rates.OutputPerToken*1000-test.output) > 1e-12 {
+				t.Fatalf("rates per 1000 tokens = input %.8f cache %.8f output %.8f", rates.InputPerToken*1000, rates.CachePerToken*1000, rates.OutputPerToken*1000)
+			}
+		})
+	}
+
+	if _, ok := kiroBillingRatesForModel("gpt-5.6-solar"); ok {
+		t.Fatal("did not expect a partial GPT-5.6 model-name match")
+	}
+}
+
+func TestInferKiroGPT56BillingUsageCacheRead(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		t.Run(model, func(t *testing.T) {
+			rates, ok := kiroBillingRatesForModel(model)
+			if !ok {
+				t.Fatal("expected billing rates")
+			}
+			const contextTokens int64 = 10000
+			credits := float64(contextTokens)*rates.CachePerToken + rates.OutputPerToken
+			got, inferred := inferKiroBillingUsage(model, usage.Detail{OutputTokens: 1}, kiroBillingSignals{
+				ContextPercentage: 5,
+				CreditUsage:       credits,
+				HasCreditUsage:    true,
+			})
+			if !inferred {
+				t.Fatal("expected billing usage inference")
+			}
+			if got.InputTokens != 0 || got.CacheReadTokens != contextTokens || got.OutputTokens != 1 {
+				t.Fatalf("usage = input %d cache %d output %d", got.InputTokens, got.CacheReadTokens, got.OutputTokens)
+			}
+		})
+	}
+}
+
+func TestInjectKiroGPT56ReasoningEffort(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
+		for _, effort := range []string{"low", "medium", "high", "xhigh"} {
+			t.Run(model+"/"+effort, func(t *testing.T) {
+				got, injected := injectKiroGPT56ReasoningEffort(
+					[]byte(`{"conversationState":{}}`),
+					[]byte(`{"reasoning":{"effort":"`+effort+`"}}`),
+					model,
+				)
+				if !injected {
+					t.Fatal("expected effort injection")
+				}
+				if actual := gjson.GetBytes(got, "additionalModelRequestFields.reasoning.effort").String(); actual != effort {
+					t.Fatalf("reasoning effort = %q, want %q; payload=%s", actual, effort, got)
+				}
+			})
+		}
+	}
+}
+
+func TestInjectKiroGPT56ReasoningEffortChatField(t *testing.T) {
+	got, injected := injectKiroGPT56ReasoningEffort(
+		[]byte(`{"conversationState":{}}`),
+		[]byte(`{"reasoning_effort":"high"}`),
+		"gpt-5.6-terra",
+	)
+	if !injected || gjson.GetBytes(got, "additionalModelRequestFields.reasoning.effort").String() != "high" {
+		t.Fatalf("expected chat reasoning_effort injection; payload=%s", got)
+	}
+}
+
+func TestInjectKiroGPT56ReasoningEffortOmitsUnsupportedValuesAndModels(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   string
+		request string
+	}{
+		{name: "invalid effort", model: "gpt-5.6-sol", request: `{"reasoning":{"effort":"max"}}`},
+		{name: "non GPT-5.6 model", model: "claude-opus-5", request: `{"reasoning":{"effort":"high"}}`},
+		{name: "missing effort", model: "gpt-5.6-luna", request: `{}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, injected := injectKiroGPT56ReasoningEffort([]byte(`{"conversationState":{}}`), []byte(test.request), test.model)
+			if injected {
+				t.Fatalf("did not expect effort injection; payload=%s", got)
+			}
+			if gjson.GetBytes(got, "additionalModelRequestFields.reasoning.effort").Exists() {
+				t.Fatalf("unexpected effort field; payload=%s", got)
 			}
 		})
 	}

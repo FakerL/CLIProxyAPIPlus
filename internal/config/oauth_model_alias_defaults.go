@@ -3,9 +3,13 @@ package config
 import "strings"
 
 // defaultKiroAliases returns default oauth-model-alias entries for Kiro.
-// These aliases expose standard Claude IDs for Kiro-prefixed upstream models.
+// These aliases expose standard model IDs for Kiro-prefixed upstream models.
 func defaultKiroAliases() []OAuthModelAlias {
 	return []OAuthModelAlias{
+		// GPT-5.6
+		{Name: "kiro-gpt-5-6-sol", Alias: "gpt-5.6-sol", Fork: true},
+		{Name: "kiro-gpt-5-6-terra", Alias: "gpt-5.6-terra", Fork: true},
+		{Name: "kiro-gpt-5-6-luna", Alias: "gpt-5.6-luna", Fork: true},
 		// Sonnet 5
 		{Name: "kiro-claude-sonnet-5", Alias: "claude-sonnet-5", Fork: true},
 		// Sonnet 4.6
